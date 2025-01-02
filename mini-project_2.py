@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 from scipy import linalg
 from sklearn.cluster import KMeans
+from sklearn.impute import SimpleImputer
 from sklearn.metrics import accuracy_score, silhouette_score
 from sklearn.datasets import load_breast_cancer, load_diabetes, load_digits, load_iris, load_wine
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
@@ -18,6 +19,17 @@ def fetch_ucirepo_data(id):
     label_encoder = LabelEncoder()
     y = label_encoder.fit_transform(y)
     return X, y
+    
+    
+def split_data(X, y):
+    X_train, X_temp, y_train, y_temp = train_test_split(X, y, test_size=0.4, random_state=42)
+    X_val, X_test, y_val, y_test = train_test_split(X_temp, y_temp, test_size=0.5, random_state=42)
+
+    scaler = StandardScaler()
+    X_train = scaler.fit_transform(X_train)
+    X_val = scaler.transform(X_val)
+    X_test = scaler.transform(X_test)
+    return X_train, X_val, X_test, y_train, y_val, y_test
 
 # Function to load dataset
 def load_dataset(dataset_loader):
@@ -173,6 +185,7 @@ def kmeans2(data, n_clusters):
 
 
 
+
 def map_labels(y_true, y_pred):
     labels = np.zeros_like(y_pred)
     for i in range(np.unique(y_pred).size):
@@ -201,9 +214,7 @@ def run_kMeans():
     mapped_labels = map_labels(y, y_pred)
     print(f"Accuracy for Iris:{accuracy_score(y, mapped_labels)*100}%")
 
-def run_kmeans_optimized():
-    iris = load_iris()
-    X, y = iris.data, iris.target
+def run_kmeans_optimized(x, y):
     optimal_k = find_optimal_clusters(X)
     y_pred, _, model = kmeans2(X, optimal_k)
     mapped_labels = map_labels(y, y_pred)
@@ -213,14 +224,34 @@ def run_kmeans_optimized():
 
     return model, accuracy
 
-def run_knn(name, X_train, X_test, y_train, y_test, k):
+def run_kmeans_test(name ,X_train, X_validate, X_test, y_train, y_validate, y_test):
+    optimal_k = find_optimal_clusters(X_train)
+    kmeans = KMeans(n_clusters=optimal_k, random_state=42, n_init='auto')
+    kmeans.fit(X_train)
+
+    y_pred_valdidate = kmeans.predict(X_validate)
+    mapped_labels = map_labels(y_validate, y_pred_valdidate)
+    accuracy = accuracy_score(y_validate, mapped_labels)
+    print(f"Accuracy for optimized k-means (k={optimal_k}) on validation, {name}: {accuracy * 100:.2f}%")
+
+    y_pred_test = kmeans.predict(X_test)
+    mapped_labels = map_labels(y_test, y_pred_test)
+    accuracy = accuracy_score(y_test, mapped_labels)
+    print(f"Accuracy for optimized k-means (k={optimal_k}) on test, {name}: {accuracy * 100:.2f}%")
+    
+
+
+def run_knn(name, X_train, X_validation,X_test, y_train, y_validation, y_test, k):
     # Train and evaluate k-NN
     knn = KNearestNeighbors(k=k)
     knn.fit(X_train, y_train)
-    y_pred = knn.predict(X_test)
-    accuracy = np.mean(y_pred == y_test)
-    print(f"Accuracy for {name}: {accuracy * 100:.2f}%")
-    
+    y_validation_pred = knn.predict(X_validation)
+    accuracy = np.mean(y_validation_pred == y_validation)
+    print(f"Accuracy for {name} on validation: {accuracy * 100:.2f}%")
+    y_test_pred = knn.predict(X_test)
+    accuracy = np.mean(y_test_pred == y_test)
+    print(f"Accuracy for {name} on test: {accuracy * 100:.2f}%")
+
 
 def run_ESN(name, X_train, X_test, y_train, y_test):
     scaler = StandardScaler()
@@ -274,18 +305,22 @@ def run_experiment(name,dataset_loader, k=3, preprocess_callback=None):
 
     run_knn(name, X_train, X_test, y_train, y_test, k)
     run_ESN(name, X_train, X_test, y_train, y_test)
+    run_kmeans_optimized()
     
 
 def run_experiment_ucirepo(name, id ,k=3, preprocess_callback=None):
     X, y = fetch_ucirepo_data(id)
     # Handle optional preprocessing callback (e.g., for diabetes)
-    if preprocess_callback:
-        y = preprocess_callback(y)
-    # print('runnig experiment uci repo')
-    X_train, X_test, y_train, y_test = preprocess_dataset(X, y)
+    # if preprocess_callback:
+    #     y = preprocess_callback(y)
+    # # print('runnig experiment uci repo')
+    # X_train, X_test, y_train, y_test = preprocess_dataset(X, y)
 
-    run_knn(name, X_train, X_test, y_train, y_test, k)
+
     # run_ESN(name, X_train, X_test, y_train, y_test)
+    X_train, X_val, X_test, y_train, y_val, y_test = split_data(X, y)
+    run_knn(name, X_train, X_val, X_test, y_train, y_val, y_test, k)
+    run_kmeans_test(name, X_train, X_val, X_test, y_train,y_val, y_test)
 
 # Preprocessing callback for diabetes dataset
 def preprocess_diabetes_labels(y):
@@ -294,22 +329,24 @@ def preprocess_diabetes_labels(y):
 if __name__ == "__main__":
     # Run k-NN experiments for all datasets
     k = [1,3,5,7,9]
-    # run_experiment("Iris", load_iris, k)
-    # run_experiment("Wine",load_wine, k)
-    # run_experiment("Breast Cancer", load_breast_cancer, k)
-    # run_experiment("Diabetes",load_diabetes, k, preprocess_callback=preprocess_diabetes_labels)
-    # run_experiment("Digits",load_digits, k)
-    # run_experiment_ucirepo("Digits fetch",80, k)
 
+
+    # Working on both knn and kmeans
     # run_experiment_ucirepo("Iris fetch", 53, k)
     # run_experiment_ucirepo("Wine fetch", 109, k)
     # run_experiment_ucirepo("Breast Cancer fetch", 17, k)
     # run_experiment_ucirepo("Digits fetch",80, k)
     # run_experiment_ucirepo("Heart Failure Clinical Records", 519, k)
-    # run_experiment_ucirepo("Heart Disease", 45, k)
     # run_experiment_ucirepo("Wine Qualitity", 186, k)
-    # run_experiment_ucirepo("Predict Student Dropout", 697, k)
 
+
+    # Working on knn (contains missing values encodes as NaN)
+    # run_experiment_ucirepo("Predict Student Dropout", 697, k)
+    # run_experiment_ucirepo("Heart Disease", 45, k)
+
+    # working on kmeans
+
+    # Not working datasets (gives error before tests) )
     # run_experiment_ucirepo("Adult", 2, k)
     # run_experiment_ucirepo("Bank Marketing", 222, k)
     # run_experiment_ucirepo("Student Performance", 320, k)
@@ -321,7 +358,37 @@ if __name__ == "__main__":
     # run_experiment_ucirepo("Air Qualitity", 360, k)
     # run_experiment_ucirepo("Obesisty levels", 544, k)
     # run_experiment_ucirepo("Stat log", 144, k)
-    run_experiment_ucirepo("Default of credit card", 350, k) # to larger to be nice
+    # run_experiment_ucirepo("Default of credit card", 350, k) # to larger to be nice
 
+    # Additional Datasets with Error Handling
+    datasets = [
+        # ("Seeds Dataset", 3),
+        # ("Parkinson's Dataset", 69),
+        # ("Statlog (Landsat Satellite)", 28),
+        # ("Yeast Dataset", 13),
+        # ("Ionosphere Dataset", 23),
+        # ("Contraceptive Method Choice", 18),
+        # ("Mushroom Dataset", 88),
+        # ("Thyroid Disease Dataset", 38)
 
-    run_kmeans_optimized()
+        #NaN
+        ("Zoo Dataset", 62),
+        ("Heart Disease Dataset", 45),
+
+        # Working
+        ("Sonar Dataset", 50),
+        ("Optical Recognition of Handwritten Digits", 43),
+        ("Wholesale Customers Dataset", 94)
+
+  
+    ]
+
+    # Running the experiment with try-except to continue even if one fails
+    for dataset_name, dataset_id in datasets:
+        try:
+            print(f"Running experiment for {dataset_name}...")
+            run_experiment_ucirepo(dataset_name, dataset_id, k)
+        except Exception as e:
+            print(f"Error with dataset {dataset_name} (ID: {dataset_id}): {e}")
+
+    # run_kmeans_optimized()
