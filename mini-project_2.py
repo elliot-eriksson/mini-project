@@ -1,12 +1,23 @@
+from statistics import mode
 from typing import Counter
 import pandas as pd
 import numpy as np
 from scipy import linalg
-from sklearn.metrics import accuracy_score
+from sklearn.cluster import KMeans
+from sklearn.metrics import accuracy_score, silhouette_score
 from sklearn.datasets import load_breast_cancer, load_diabetes, load_digits, load_iris, load_wine
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sklearn.model_selection import train_test_split
 from ucimlrepo import fetch_ucirepo 
+from sklearn.preprocessing import LabelEncoder
+
+def fetch_ucirepo_data(id): 
+    dataset = fetch_ucirepo(id=id)
+    X = dataset.data.features.to_numpy()  
+    y = dataset.data.targets.to_numpy().ravel()
+    label_encoder = LabelEncoder()
+    y = label_encoder.fit_transform(y)
+    return X, y
 
 # Function to load dataset
 def load_dataset(dataset_loader):
@@ -148,6 +159,59 @@ class ESN():
         I = np.eye(augmented_states.shape[1])
         self.W_out = np.linalg.solve(augmented_states.T @ augmented_states + beta * I, augmented_states.T @ y_train_onehot)
 
+def kmeans(data):
+    # scaler = StandardScaler()
+    # data_scaled = scaler.fit_transform(data)
+    kmeans = KMeans(n_clusters=3, random_state=42, n_init=20)
+    kmeans.fit(data)
+    return kmeans.labels_
+
+def kmeans2(data, n_clusters):
+    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init='auto')
+    kmeans.fit(data)
+    return kmeans.labels_, kmeans.inertia_, kmeans
+
+
+
+def map_labels(y_true, y_pred):
+    labels = np.zeros_like(y_pred)
+    for i in range(np.unique(y_pred).size):
+        mask = (y_pred == i)
+        if np.any(mask):
+            labels[mask] = np.array(mode(y_true[mask])).flatten()[0] 
+    return labels
+
+def find_optimal_clusters(X):
+    inertia = []
+    silhouette_scores = []
+    cluster_range = range(2, 11)
+
+    for k in cluster_range:
+        y_pred, inertia_score, _ = kmeans2(X, k)
+        inertia.append(inertia_score)
+        silhouette_scores.append(silhouette_score(X, y_pred))
+    optimal_k = cluster_range[np.argmax(silhouette_scores)]
+    print(f'Optimal number of clusters (Silhouette Score): {optimal_k}')
+    return optimal_k
+
+def run_kMeans():
+    iris = load_iris()
+    X, y = iris.data, iris.target
+    y_pred = kmeans(X)
+    mapped_labels = map_labels(y, y_pred)
+    print(f"Accuracy for Iris:{accuracy_score(y, mapped_labels)*100}%")
+
+def run_kmeans_optimized():
+    iris = load_iris()
+    X, y = iris.data, iris.target
+    optimal_k = find_optimal_clusters(X)
+    y_pred, _, model = kmeans2(X, optimal_k)
+    mapped_labels = map_labels(y, y_pred)
+    
+    accuracy = accuracy_score(y, mapped_labels)
+    print(f"Accuracy for optimized k-means (k={optimal_k}): {accuracy * 100:.2f}%")
+
+    return model, accuracy
 
 def run_knn(name, X_train, X_test, y_train, y_test, k):
     # Train and evaluate k-NN
@@ -156,6 +220,7 @@ def run_knn(name, X_train, X_test, y_train, y_test, k):
     y_pred = knn.predict(X_test)
     accuracy = np.mean(y_pred == y_test)
     print(f"Accuracy for {name}: {accuracy * 100:.2f}%")
+    
 
 def run_ESN(name, X_train, X_test, y_train, y_test):
     scaler = StandardScaler()
@@ -211,6 +276,16 @@ def run_experiment(name,dataset_loader, k=3, preprocess_callback=None):
     run_ESN(name, X_train, X_test, y_train, y_test)
     
 
+def run_experiment_ucirepo(name, id ,k=3, preprocess_callback=None):
+    X, y = fetch_ucirepo_data(id)
+    # Handle optional preprocessing callback (e.g., for diabetes)
+    if preprocess_callback:
+        y = preprocess_callback(y)
+    # print('runnig experiment uci repo')
+    X_train, X_test, y_train, y_test = preprocess_dataset(X, y)
+
+    run_knn(name, X_train, X_test, y_train, y_test, k)
+    # run_ESN(name, X_train, X_test, y_train, y_test)
 
 # Preprocessing callback for diabetes dataset
 def preprocess_diabetes_labels(y):
@@ -219,8 +294,34 @@ def preprocess_diabetes_labels(y):
 if __name__ == "__main__":
     # Run k-NN experiments for all datasets
     k = [1,3,5,7,9]
-    run_experiment("Iris", load_iris, k)
-    run_experiment("Wine",load_wine, k)
-    run_experiment("Breast Cancer", load_breast_cancer, k)
-    run_experiment("Diabetes",load_diabetes, k, preprocess_callback=preprocess_diabetes_labels)
-    run_experiment("Digits",load_digits, k)
+    # run_experiment("Iris", load_iris, k)
+    # run_experiment("Wine",load_wine, k)
+    # run_experiment("Breast Cancer", load_breast_cancer, k)
+    # run_experiment("Diabetes",load_diabetes, k, preprocess_callback=preprocess_diabetes_labels)
+    # run_experiment("Digits",load_digits, k)
+    # run_experiment_ucirepo("Digits fetch",80, k)
+
+    # run_experiment_ucirepo("Iris fetch", 53, k)
+    # run_experiment_ucirepo("Wine fetch", 109, k)
+    # run_experiment_ucirepo("Breast Cancer fetch", 17, k)
+    # run_experiment_ucirepo("Digits fetch",80, k)
+    # run_experiment_ucirepo("Heart Failure Clinical Records", 519, k)
+    # run_experiment_ucirepo("Heart Disease", 45, k)
+    # run_experiment_ucirepo("Wine Qualitity", 186, k)
+    # run_experiment_ucirepo("Predict Student Dropout", 697, k)
+
+    # run_experiment_ucirepo("Adult", 2, k)
+    # run_experiment_ucirepo("Bank Marketing", 222, k)
+    # run_experiment_ucirepo("Student Performance", 320, k)
+    # run_experiment_ucirepo("Online Retail", 352, k) #AttributeError: 'NoneType' object has no attribute 'to_numpy'
+    # run_experiment_ucirepo("Car Evaluation", 19, k) #ValueError: could not convert string to float: 'vhigh'
+    # run_experiment_ucirepo("Automobile", 10, k)
+    # run_experiment_ucirepo("Abalone", 1, k)
+    # run_experiment_ucirepo("Mushrooms", 73, k)
+    # run_experiment_ucirepo("Air Qualitity", 360, k)
+    # run_experiment_ucirepo("Obesisty levels", 544, k)
+    # run_experiment_ucirepo("Stat log", 144, k)
+    run_experiment_ucirepo("Default of credit card", 350, k) # to larger to be nice
+
+
+    run_kmeans_optimized()
