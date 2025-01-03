@@ -4,11 +4,10 @@ import pandas as pd
 import numpy as np
 from scipy import linalg
 from sklearn.cluster import KMeans
-from sklearn.impute import SimpleImputer
 from sklearn.metrics import accuracy_score, silhouette_score
 from sklearn.datasets import load_breast_cancer, load_diabetes, load_digits, load_iris, load_wine
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import KFold, train_test_split
 from ucimlrepo import fetch_ucirepo 
 from sklearn.preprocessing import LabelEncoder
 
@@ -19,17 +18,6 @@ def fetch_ucirepo_data(id):
     label_encoder = LabelEncoder()
     y = label_encoder.fit_transform(y)
     return X, y
-    
-    
-def split_data(X, y):
-    X_train, X_temp, y_train, y_temp = train_test_split(X, y, test_size=0.4, random_state=42)
-    X_val, X_test, y_val, y_test = train_test_split(X_temp, y_temp, test_size=0.5, random_state=42)
-
-    scaler = StandardScaler()
-    X_train = scaler.fit_transform(X_train)
-    X_val = scaler.transform(X_val)
-    X_test = scaler.transform(X_test)
-    return X_train, X_val, X_test, y_train, y_val, y_test
 
 # Function to load dataset
 def load_dataset(dataset_loader):
@@ -171,87 +159,150 @@ class ESN():
         I = np.eye(augmented_states.shape[1])
         self.W_out = np.linalg.solve(augmented_states.T @ augmented_states + beta * I, augmented_states.T @ y_train_onehot)
 
-def kmeans(data):
-    # scaler = StandardScaler()
-    # data_scaled = scaler.fit_transform(data)
-    kmeans = KMeans(n_clusters=3, random_state=42, n_init=20)
-    kmeans.fit(data)
-    return kmeans.labels_
 
-def kmeans2(data, n_clusters):
-    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init='auto')
-    kmeans.fit(data)
-    return kmeans.labels_, kmeans.inertia_, kmeans
+class KMeansClassifier:
+    def __init__(self, n_clusters=3, n_splits=5, random_state=42):
+        self.n_clusters = n_clusters
+        self.n_splits = n_splits
+        self.random_state = random_state
+        self.kmeans = KMeans(n_clusters=self.n_clusters, random_state=self.random_state)
+
+    def fit(self, X):
+        self.kmeans.fit(X)
+        return self.kmeans.labels_
+
+    def predict(self, X):
+        return self.kmeans.predict(X)
+
+    def map_labels(self, y_true, y_pred):
+        labels = np.zeros_like(y_pred)
+        for i in range(self.n_clusters):
+            mask = (y_pred == i)
+            if np.any(mask):
+                bincounts = np.bincount(y_true[mask])
+                # Assign the most common label
+                labels[mask] = np.argmax(bincounts)
+        return labels
+
+    def cross_validate(self, X, y, k_values):
+        best_k = None
+        best_score = -1
+        all_scores = {}
+
+        for k in k_values:
+            kmeans = KMeans(n_clusters=k, random_state=self.random_state)
+            kf = KFold(n_splits=self.n_splits, shuffle=True, random_state=self.random_state)
+            silhouette_scores = []
+
+            for train_index, test_index in kf.split(X):
+                X_train, X_test = X[train_index], X[test_index]
+                y_train, y_test = y[train_index], y[test_index]
+
+                kmeans.fit(X_train)
+                y_pred = kmeans.predict(X_test)
+                mapped_labels = self.map_labels(y_test, y_pred)
+                silhouette_scores.append(silhouette_score(X_test, y_pred))
+
+            avg_score = np.mean(silhouette_scores)
+            all_scores[k] = avg_score
+
+            if avg_score > best_score:
+                best_score = avg_score
+                best_k = k
+
+        return best_k, all_scores
+    def train_and_test(self, name, X_train, X_test, y_train, y_test):
+        # Fit and predict on train data
+        y_train_pred = self.kmeans.fit_predict(X_train)
+        y_test_pred = self.kmeans.predict(X_test)
+
+        # Map labels
+        y_train_mapped = self.map_labels(y_train, y_train_pred)
+        y_test_mapped = self.map_labels(y_test, y_test_pred)
+
+        # Evaluate accuracy
+        train_accuracy = accuracy_score(y_train, y_train_mapped)
+        test_accuracy = accuracy_score(y_test, y_test_mapped)
+
+        print(f"{name} - Train Accuracy: {train_accuracy * 100:.2f}%")
+        print(f"{name} - Test Accuracy: {test_accuracy * 100:.2f}%")
+# def kmeans(data):
+#     # scaler = StandardScaler()
+#     # data_scaled = scaler.fit_transform(data)
+#     kmeans = KMeans(n_clusters=3, random_state=42, n_init=20)
+#     kmeans.fit(data)
+#     return kmeans.labels_
+
+# def kmeans2(data, n_clusters):
+#     kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init='auto')
+#     kmeans.fit(data)
+#     return kmeans.labels_, kmeans.inertia_, kmeans
 
 
 
+# def map_labels(y_true, y_pred):
+#     labels = np.zeros_like(y_pred)
+#     for i in range(np.unique(y_pred).size):
+#         mask = (y_pred == i)
+#         if np.any(mask):
+#             labels[mask] = np.array(mode(y_true[mask])).flatten()[0] 
+#     return labels
 
-def map_labels(y_true, y_pred):
-    labels = np.zeros_like(y_pred)
-    for i in range(np.unique(y_pred).size):
-        mask = (y_pred == i)
-        if np.any(mask):
-            labels[mask] = np.array(mode(y_true[mask])).flatten()[0] 
-    return labels
+# def find_optimal_clusters(X):
+#     inertia = []
+#     silhouette_scores = []
+#     cluster_range = range(2, 11)
 
-def find_optimal_clusters(X):
-    inertia = []
-    silhouette_scores = []
-    cluster_range = range(2, 11)
+#     for k in cluster_range:
+#         y_pred, inertia_score, _ = kmeans2(X, k)
+#         inertia.append(inertia_score)
+#         silhouette_scores.append(silhouette_score(X, y_pred))
+#     optimal_k = cluster_range[np.argmax(silhouette_scores)]
+#     print(f'Optimal number of clusters (Silhouette Score): {optimal_k}')
+#     return optimal_k
 
-    for k in cluster_range:
-        y_pred, inertia_score, _ = kmeans2(X, k)
-        inertia.append(inertia_score)
-        silhouette_scores.append(silhouette_score(X, y_pred))
-    optimal_k = cluster_range[np.argmax(silhouette_scores)]
-    print(f'Optimal number of clusters (Silhouette Score): {optimal_k}')
-    return optimal_k
+def run_kMeans(name, X_train, X_test, y_train, y_test, k):
+    # iris = load_iris()
+    # X, y = iris.data, iris.target
+    kmeans_classifier = KMeansClassifier()
+    best_k, scores = kmeans_classifier.cross_validate(X_train, y_train, k)
+    print(f"Best k value selected by cross-validation: {best_k}")
+    print(f'{scores=}')
+    kmeans_classifier.n_clusters = best_k
+    kmeans_classifier.train_and_test(name, X_train, X_test, y_train, y_test)
+    # kmeans_classifier = KMeansClassifier()
+    # best_k, scores = kmeans_classifier.cross_validate(X, y, k)
+    # print(f"Best k value selected by cross-validation: {best_k}")
+    # print(f'{scores=}')
 
-def run_kMeans():
-    iris = load_iris()
-    X, y = iris.data, iris.target
-    y_pred = kmeans(X)
-    mapped_labels = map_labels(y, y_pred)
-    print(f"Accuracy for Iris:{accuracy_score(y, mapped_labels)*100}%")
+    # kmeans_classifier.n_clusters = best_k
+    # labels = kmeans_classifier.fit(X)
+    # mapped_labels = kmeans_classifier.map_labels(y, labels)
+    # accuracy = accuracy_score(y, mapped_labels)
+    # print(f"Final Accuracy with k={best_k}: {accuracy * 100:.2f}%")
 
-def run_kmeans_optimized(x, y):
-    optimal_k = find_optimal_clusters(X)
-    y_pred, _, model = kmeans2(X, optimal_k)
-    mapped_labels = map_labels(y, y_pred)
+
+
+# def run_kmeans_optimized(name, X_train, X_test, y_train, y_test, k):
+#     iris = load_iris()
+#     X, y = iris.data, iris.target
+#     optimal_k = find_optimal_clusters(X)
+#     y_pred, _, model = kmeans2(X, optimal_k)
+#     mapped_labels = map_labels(y, y_pred)
     
-    accuracy = accuracy_score(y, mapped_labels)
-    print(f"Accuracy for optimized k-means (k={optimal_k}): {accuracy * 100:.2f}%")
+#     accuracy = accuracy_score(y, mapped_labels)
+#     print(f"Accuracy for optimized k-means (k={optimal_k}): {accuracy * 100:.2f}%")
 
-    return model, accuracy
+#     return model, accuracy
 
-def run_kmeans_test(name ,X_train, X_validate, X_test, y_train, y_validate, y_test):
-    optimal_k = find_optimal_clusters(X_train)
-    kmeans = KMeans(n_clusters=optimal_k, random_state=42, n_init='auto')
-    kmeans.fit(X_train)
-
-    y_pred_valdidate = kmeans.predict(X_validate)
-    mapped_labels = map_labels(y_validate, y_pred_valdidate)
-    accuracy = accuracy_score(y_validate, mapped_labels)
-    print(f"Accuracy for optimized k-means (k={optimal_k}) on validation, {name}: {accuracy * 100:.2f}%")
-
-    y_pred_test = kmeans.predict(X_test)
-    mapped_labels = map_labels(y_test, y_pred_test)
-    accuracy = accuracy_score(y_test, mapped_labels)
-    print(f"Accuracy for optimized k-means (k={optimal_k}) on test, {name}: {accuracy * 100:.2f}%")
-    
-
-
-def run_knn(name, X_train, X_validation,X_test, y_train, y_validation, y_test, k):
+def run_knn(name, X_train, X_test, y_train, y_test, k):
     # Train and evaluate k-NN
     knn = KNearestNeighbors(k=k)
     knn.fit(X_train, y_train)
-    y_validation_pred = knn.predict(X_validation)
-    accuracy = np.mean(y_validation_pred == y_validation)
-    print(f"Accuracy for {name} on validation: {accuracy * 100:.2f}%")
-    y_test_pred = knn.predict(X_test)
-    accuracy = np.mean(y_test_pred == y_test)
-    print(f"Accuracy for {name} on test: {accuracy * 100:.2f}%")
-
+    y_pred = knn.predict(X_test)
+    accuracy = np.mean(y_pred == y_test)
+    print(f"Accuracy for {name}: {accuracy * 100:.2f}%")
+    
 
 def run_ESN(name, X_train, X_test, y_train, y_test):
     scaler = StandardScaler()
@@ -305,22 +356,20 @@ def run_experiment(name,dataset_loader, k=3, preprocess_callback=None):
 
     run_knn(name, X_train, X_test, y_train, y_test, k)
     run_ESN(name, X_train, X_test, y_train, y_test)
-    run_kmeans_optimized()
     
 
 def run_experiment_ucirepo(name, id ,k=3, preprocess_callback=None):
     X, y = fetch_ucirepo_data(id)
     # Handle optional preprocessing callback (e.g., for diabetes)
-    # if preprocess_callback:
-    #     y = preprocess_callback(y)
-    # # print('runnig experiment uci repo')
-    # X_train, X_test, y_train, y_test = preprocess_dataset(X, y)
+    if preprocess_callback:
+        y = preprocess_callback(y)
+    # print('runnig experiment uci repo')
+    X_train, X_test, y_train, y_test = preprocess_dataset(X, y)
 
-
+    # run_knn(name, X_train, X_test, y_train, y_test, k)
+    # run_kMeans()
+    run_kMeans(name, X_train, X_test, y_train, y_test, k)
     # run_ESN(name, X_train, X_test, y_train, y_test)
-    X_train, X_val, X_test, y_train, y_val, y_test = split_data(X, y)
-    run_knn(name, X_train, X_val, X_test, y_train, y_val, y_test, k)
-    run_kmeans_test(name, X_train, X_val, X_test, y_train,y_val, y_test)
 
 # Preprocessing callback for diabetes dataset
 def preprocess_diabetes_labels(y):
@@ -328,25 +377,24 @@ def preprocess_diabetes_labels(y):
 
 if __name__ == "__main__":
     # Run k-NN experiments for all datasets
-    k = [1,3,5,7,9]
+    k = [3,5,7,9]
+    # run_experiment("Iris", load_iris, k)
+    # run_experiment("Wine",load_wine, k)
+    # run_experiment("Breast Cancer", load_breast_cancer, k)
+    # run_experiment("Diabetes",load_diabetes, k, preprocess_callback=preprocess_diabetes_labels)
+    # run_experiment("Digits",load_digits, k)
+    # run_experiment_ucirepo("Digits fetch",80, k)
 
-
-    # Working on both knn and kmeans
     # run_experiment_ucirepo("Iris fetch", 53, k)
     # run_experiment_ucirepo("Wine fetch", 109, k)
     # run_experiment_ucirepo("Breast Cancer fetch", 17, k)
     # run_experiment_ucirepo("Digits fetch",80, k)
     # run_experiment_ucirepo("Heart Failure Clinical Records", 519, k)
-    # run_experiment_ucirepo("Wine Qualitity", 186, k)
-
-
-    # Working on knn (contains missing values encodes as NaN)
-    # run_experiment_ucirepo("Predict Student Dropout", 697, k)
     # run_experiment_ucirepo("Heart Disease", 45, k)
+    # run_experiment_ucirepo("Wine Qualitity", 186, k)
+    # run_experiment_ucirepo("Predict Student Dropout", 697, k)
+    
 
-    # working on kmeans
-
-    # Not working datasets (gives error before tests) )
     # run_experiment_ucirepo("Adult", 2, k)
     # run_experiment_ucirepo("Bank Marketing", 222, k)
     # run_experiment_ucirepo("Student Performance", 320, k)
@@ -360,35 +408,6 @@ if __name__ == "__main__":
     # run_experiment_ucirepo("Stat log", 144, k)
     # run_experiment_ucirepo("Default of credit card", 350, k) # to larger to be nice
 
-    # Additional Datasets with Error Handling
-    datasets = [
-        # ("Seeds Dataset", 3),
-        # ("Parkinson's Dataset", 69),
-        # ("Statlog (Landsat Satellite)", 28),
-        # ("Yeast Dataset", 13),
-        # ("Ionosphere Dataset", 23),
-        # ("Contraceptive Method Choice", 18),
-        # ("Mushroom Dataset", 88),
-        # ("Thyroid Disease Dataset", 38)
-
-        #NaN
-        ("Zoo Dataset", 62),
-        ("Heart Disease Dataset", 45),
-
-        # Working
-        ("Sonar Dataset", 50),
-        ("Optical Recognition of Handwritten Digits", 43),
-        ("Wholesale Customers Dataset", 94)
-
-  
-    ]
-
-    # Running the experiment with try-except to continue even if one fails
-    for dataset_name, dataset_id in datasets:
-        try:
-            print(f"Running experiment for {dataset_name}...")
-            run_experiment_ucirepo(dataset_name, dataset_id, k)
-        except Exception as e:
-            print(f"Error with dataset {dataset_name} (ID: {dataset_id}): {e}")
-
+    # run_kMeans(k)    #for k minimum 2
+    run_experiment_ucirepo("Iris fetch", 53, k) 
     # run_kmeans_optimized()
