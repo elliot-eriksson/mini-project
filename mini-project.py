@@ -1,36 +1,33 @@
-from typing import Counter
-import pandas as pd
 import numpy as np
 from scipy import linalg
-from sklearn.metrics import accuracy_score
-from sklearn.datasets import load_breast_cancer, load_diabetes, load_digits, load_iris, load_wine
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
-from sklearn.model_selection import train_test_split
+from sklearn.cluster import KMeans
+from sklearn.metrics import accuracy_score, silhouette_score
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import KFold, train_test_split
 from ucimlrepo import fetch_ucirepo 
+from sklearn.preprocessing import LabelEncoder
 
-def load_dataset(dataset_name):
-# Fetch dataset
-
-    # Features (X) and Targets (y)
-    X = dataset_name.data 
-    y = dataset_name.target   
-    
+def fetch_ucirepo_data(id): 
+    dataset = fetch_ucirepo(id=id)
+    X = dataset.data.features.to_numpy()  
+    y = dataset.data.targets.to_numpy().ravel()
     return X, y
 
-
+# Function to preprocess dataset
 def preprocess_dataset(X, y):
-    # Split dataset into training and testing
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-    
-    # Standardize features
+    # Lable target data
+    label_encoder = LabelEncoder()
+    y = label_encoder.fit_transform(y)
+    # Split the data into train, validate, test sets
+    X_train, X_temp, y_train, y_temp = train_test_split(X, y, test_size=0.4, random_state=42)
+    X_val, X_test, y_val, y_test = train_test_split(X_temp, y_temp, test_size=0.5, random_state=42)
+    # Scale the data acording to the train data
     scaler = StandardScaler()
     X_train = scaler.fit_transform(X_train)
+    X_val = scaler.transform(X_val)
     X_test = scaler.transform(X_test)
-    
-    return X_train, X_test, y_train, y_test
+    return X_train, X_val, X_test, y_train, y_val, y_test
 
-
-# Implement k-NN Classifier
 class KNearestNeighbors:
     def __init__(self, k):
         self.k = k
@@ -44,8 +41,6 @@ class KNearestNeighbors:
     def predict(self, X_test):
         best_k, _ = self.crossValidateKnn(self.X_train, self.y_train, self.k)
         print(f"Best k value selected by cross-validation: {best_k}")
-
-        # return self.crossValidateKnn(self.X_train, X_test, self.k)
         return self.predictKNN(self.X_train, self.y_train, X_test, best_k)
 
     def predictKNN(self, Tr_set, Ltr_set, X, k):
@@ -113,11 +108,13 @@ class ESN():
         self.W_in = (np.random.uniform(-1, 1, [self.reservoir_size_Nx, self.input_dim + 1])) * self.input_scaling
         # Generate W
         self.W = np.random.uniform(-1, 1, [self.reservoir_size_Nx, self.reservoir_size_Nx])
+        
         # Calculate the spectral radius of W (eigenvalues) and divide W by it
         eigenvalues = linalg.eigvals(self.W)
         max_abs_eigenvalue = max(abs(eigenvalues))
-        print("Spectral radius of W: ", max_abs_eigenvalue)
+
         self.W = self.W / max_abs_eigenvalue
+        
         # Scale the W matrix with "ultimate" spectral radius
         self.W = self.W * self.spectral_radius
         self.W_out = None
@@ -159,117 +156,120 @@ class ESN():
         self.W_out = np.linalg.solve(augmented_states.T @ augmented_states + beta * I, augmented_states.T @ y_train_onehot)
 
 
+class KMeansClassifier:
+    def __init__(self, n_clusters=3, n_splits=5, random_state=42):
+        self.n_clusters = n_clusters
+        self.n_splits = n_splits
+        self.random_state = random_state
+        self.kmeans = KMeans(n_clusters=self.n_clusters, random_state=self.random_state)
 
-def iris():
-    # Load dataset
-    X, y = load_dataset(load_iris())
-    X_train, X_test, y_train, y_test = preprocess_dataset(X, y)
+    def fit(self, X):
+        self.kmeans.fit(X)
+        return self.kmeans.labels_
 
+    def predict(self, X):
+        return self.kmeans.predict(X)
+
+    def map_labels(self, y_true, y_pred):
+        labels = np.zeros_like(y_pred)
+        for i in range(self.n_clusters):
+            mask = (y_pred == i)
+            if np.any(mask):
+                bincounts = np.bincount(y_true[mask])
+                # Assign the most common label
+                labels[mask] = np.argmax(bincounts)
+        return labels
+
+    def cross_validate(self, X, y, k_values):
+        best_k = None
+        best_score = -1
+        all_scores = {}
+
+        for k in k_values:
+            kmeans = KMeans(n_clusters=k, random_state=self.random_state)
+            kf = KFold(n_splits=self.n_splits, shuffle=True, random_state=self.random_state)
+            silhouette_scores = []
+
+            for train_index, test_index in kf.split(X):
+                X_train, X_test = X[train_index], X[test_index]
+                y_train, y_test = y[train_index], y[test_index]
+
+                kmeans.fit(X_train)
+                y_pred = kmeans.predict(X_test)
+                mapped_labels = self.map_labels(y_test, y_pred)
+                silhouette_scores.append(silhouette_score(X_test, y_pred))
+
+            avg_score = np.mean(silhouette_scores)
+            all_scores[k] = avg_score
+
+            if avg_score > best_score:
+                best_score = avg_score
+                best_k = k
+
+        return best_k, all_scores
+    
+    def train_and_test(self, name, X_train, X_validation,X_test, y_train, y_validation, y_test):
+        y_train_pred = self.kmeans.fit_predict(X_train)
+        y_validation_pred = self.kmeans.predict(X_validation)
+        y_test_pred = self.kmeans.predict(X_test)
+
+
+        y_train_mapped = self.map_labels(y_train, y_train_pred)
+        y_validation_mapped = self.map_labels(y_validation, y_validation_pred)
+        y_test_mapped = self.map_labels(y_test, y_test_pred)
+
+        train_accuracy = accuracy_score(y_train, y_train_mapped)
+        validation_accuracy = accuracy_score(y_validation, y_validation_mapped)
+        test_accuracy = accuracy_score(y_test, y_test_mapped)
+
+        print(f"{name} - Train Accuracy: {train_accuracy * 100:.2f}%")
+        print(f"{name} - Validation Accuracy: {validation_accuracy * 100:.2f}%")
+        print(f"{name} - Test Accuracy: {test_accuracy * 100:.2f}%")
+
+def run_kMeans(name, X_train, X_validation,X_test, y_train, y_validation, y_test, k):
+
+    kmeans_classifier = KMeansClassifier()
+    best_k, scores = kmeans_classifier.cross_validate(X_train, y_train, k)
+    print(f"Finished training k-Means for {name}")
+    print(f"Best k value selected by cross-validation: {best_k}")
+    print(f'{scores=}')
+    kmeans_classifier.n_clusters = best_k
+    kmeans_classifier.train_and_test(name, X_train, X_validation,X_test, y_train, y_validation, y_test)
+
+
+def run_knn(name, X_train, X_validation,X_test, y_train, y_validation, y_test, k):
     # Train and evaluate k-NN
-    knn = KNearestNeighbors(k=[1,2,3,4,5])
+    knn = KNearestNeighbors(k=k)
     knn.fit(X_train, y_train)
+    y_validation_pred = knn.predict(X_validation)
     y_pred = knn.predict(X_test)
+    accuracy_validation = np.mean(y_validation_pred == y_validation)
     accuracy = np.mean(y_pred == y_test)
-    print(f"Accuracy: {accuracy * 100:.2f}%")
+    print(f"Finished training k-NN for {name}")
+    print(f"Accuracy for {name} (Validation): {accuracy_validation * 100:.2f}%")
+    print(f"Accuracy for {name}: {accuracy * 100:.2f}%")
+    
 
-    scaler = StandardScaler()
-    X_train_ESN = scaler.fit_transform(X_train)
-    X_test_ESN = scaler.transform(X_test)
 
-    encoder = OneHotEncoder(sparse_output=False, categories='auto')
-    y_train_ESN = encoder.fit_transform(y_train.reshape(-1,1))
+def run_experiment_ucirepo(name, id ,k=3, preprocess_callback=None):
+    X, y = fetch_ucirepo_data(id)
+    # Handle optional preprocessing callback (e.g., for diabetes)
+    if preprocess_callback:
+        y = preprocess_callback(y)
+    X_train, X_validation, X_test, y_train, y_validation, y_test= preprocess_dataset(X, y)
 
-    reservoir_size = 1000
-    spectral_radius = 0.99
-    input_scaling = 0.25
-    reg_param = 1e-8
-    nr_of_simulations = 10    
+    run_knn(name, X_train, X_validation, X_test, y_train, y_validation, y_test, k)
+    run_kMeans(name, X_train, X_validation, X_test, y_train, y_validation, y_test, k)
 
-    predictions = []
 
-    for run in range(nr_of_simulations):
-        esn = ESN(input_dim=X_train_ESN.shape[1], 
-                reservoir_size_Nx=reservoir_size, 
-                output_dim=y_train_ESN.shape[1], 
-                spectral_radius=spectral_radius, 
-                input_scaling=input_scaling,
-                seed=run)
-
-        esn.trainLeaf(X_train_ESN, y_train_ESN , reg_param=reg_param)
-
-        prediction = esn.predictLeaf(X_test_ESN)
-        predictions.append(prediction)
-
-    print(f'{predictions=}')
-    mean_predictions = np.mean(predictions, axis=0)
-
-    # The predicted labels are of by one so we need to add 1 to the predicted labels
-    predicted_labels = np.argmax(mean_predictions, axis=1) 
-    print(f'{predicted_labels=}')
-    print(f'{y_test=}')
-    print(f'{accuracy_score(y_test, predicted_labels)=}')
-# X,y = load_dataset(load_iris())
-# X_train, X_test, y_train, y_test = preprocess_dataset(X, y)
-# # Train and evaluate k-NN
-# knn = KNearestNeighbors(k=3)
-# knn.fit(X_train, y_train)
-# y_pred = knn.predict(X_test) samuel var här 
-# accuracy = np.mean(y_pred == y_test)
-# print(f"Accuracy: {accuracy * 100:.2f}%")
-
-def wine():
-    # Load dataset
-    X, y = load_dataset(load_wine())
-    X_train, X_test, y_train, y_test = preprocess_dataset(X, y)
-
-    # Train and evaluate k-NN
-    knn = KNearestNeighbors(k=[1,2,3,4,5])
-    knn.fit(X_train, y_train)
-    y_pred = knn.predict(X_test)
-    accuracy = np.mean(y_pred == y_test)
-    print(f"Accuracy: {accuracy * 100:.2f}%")
-
-def breast_cancer():
-    # Load dataset
-    X, y = load_dataset(load_breast_cancer())
-    X_train, X_test, y_train, y_test = preprocess_dataset(X, y)
-
-    # Train and evaluate k-NN
-    knn = KNearestNeighbors(k=[1,2,3,4,5])
-    knn.fit(X_train, y_train)
-    y_pred = knn.predict(X_test)
-    accuracy = np.mean(y_pred == y_test)
-    print(f"Accuracy: {accuracy * 100:.2f}%")
-
-def diabetes():
-    # Load dataset
-    X, y = load_dataset(load_diabetes())
-    y = pd.qcut(y, q=3, labels=[0, 1, 2]).astype(int)
-    X_train, X_test, y_train, y_test = preprocess_dataset(X, y)
-
-    # Train and evaluate k-NN
-    knn = KNearestNeighbors(k=[1,2,3,4,5])
-    knn.fit(X_train, y_train)
-    y_pred = knn.predict(X_test)
-    accuracy = np.mean(y_pred == y_test)
-    print(f"Accuracy: {accuracy * 100:.2f}%")
-
-def digits():
-    # Load dataset
-    X, y = load_dataset(load_digits())
-    X_train, X_test, y_train, y_test = preprocess_dataset(X, y)
-
-    # Train and evaluate k-NN
-    knn = KNearestNeighbors(k=[1,2,3,4,5])
-    knn.fit(X_train, y_train)
-    y_pred = knn.predict(X_test)
-    accuracy = np.mean(y_pred == y_test)
-    print(f"Accuracy: {accuracy * 100:.2f}%") 
 
 if __name__ == "__main__":
-    iris()
-    wine()
-    breast_cancer()
-    diabetes()
-    digits()
 
+    k = range(2,10)
+
+    run_experiment_ucirepo("Iris", 53, k)
+    run_experiment_ucirepo("Wine", 109, k)
+    run_experiment_ucirepo("Breast Cancer", 17, k)
+    run_experiment_ucirepo("Digits",80, k)
+    run_experiment_ucirepo("Heart Failure Clinical Records", 519, k)
+    run_experiment_ucirepo("Wine Qualitity", 186, k)
