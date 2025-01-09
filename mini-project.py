@@ -7,6 +7,8 @@ from sklearn.model_selection import KFold, train_test_split
 from ucimlrepo import fetch_ucirepo 
 from sklearn.preprocessing import LabelEncoder
 
+# sunlar-3@student.ltu.se, lelrek-1@student.ltu.se
+
 def fetch_ucirepo_data(id): 
     dataset = fetch_ucirepo(id=id)
     X = dataset.data.features.to_numpy()  
@@ -222,7 +224,6 @@ class KMeansClassifier:
         validation_accuracy = accuracy_score(y_validation, y_validation_mapped)
         test_accuracy = accuracy_score(y_test, y_test_mapped)
 
-        print(f"{name} - Train Accuracy: {train_accuracy * 100:.2f}%")
         print(f"{name} - Validation Accuracy: {validation_accuracy * 100:.2f}%")
         print(f"{name} - Test Accuracy: {test_accuracy * 100:.2f}%")
 
